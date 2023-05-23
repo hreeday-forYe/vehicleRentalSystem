@@ -6,7 +6,6 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const dotenv = require("dotenv");
 dotenv.config();
-const User = require("./models/User");
 const bcryptSalt = bcrypt.genSaltSync(10);
 const jwt = require('jsonwebtoken');
 const jwtSecret = "asdfasdwrtw1FFaFFsdG";
@@ -15,7 +14,10 @@ const imageDownloader = require('image-downloader');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
-const Vehicle = require('./models/Vehicle')
+const User = require("./models/User");
+const Vehicle = require('./models/Vehicle');
+const BookingModel = require('./models/Booking');
+
 // app should use json parser from the express for the request to be successful
 app.use(express.json());
 app.use(cookieParser());
@@ -28,6 +30,17 @@ app.use(cors({
   origin: 'http://localhost:5173'
 }));
 
+// function to get the user data
+function getUserDataFromReq(req){
+  return new Promise((resolve, reject)=>{
+    jwt.verify(req.cookies.token,jwtSecret,{},async (err, userData)=>{
+      if(err) throw err;
+      resolve(userData);
+    })
+  });
+   
+}
+
 // Connecting our database with moongoose
 mongoose.connect(process.env.MongoDB_URL);
 
@@ -37,14 +50,16 @@ app.get("/test", (req, res) => {
 
 // Grabbing the name email and password from register
 app.post("/register", async (req, res) => {
-  // mongoose.connect(process.env.MONGODB_URL);
-  const {name,email,password} = req.body;
+  const {name,email,password,phone, address} = req.body;
 
   try {
     const userDoc = await User.create({
       name,
       email,
       password:bcrypt.hashSync(password, bcryptSalt),
+      phone,
+      address,
+
     });
     res.json(userDoc);
   } catch (e) {
@@ -72,33 +87,38 @@ app.post("/login", async (req,res)=>{
   }
 })
 
-// code for /profile path backend
 
-app.get('/profile',(req,res)=>{
-  // console.log("Received request to /profile");
-  const{token} = req.cookies;
-  // console.log("Token:", token);
-  if(token){
-    jwt.verify(token,jwtSecret,{},async (err, userData)=>{
-      if(err) {
-        console.error(err);
-        res.json(null);
-      } 
-      const {name,email, _id} = await User.findById(userData.id)
-      res.json({name, email, _id})
-    })
+
+app.get('/profile', (req,res) => {
+  const {token} = req.cookies;
+  if (token) {
+    jwt.verify(token, jwtSecret, {}, async (err, userData) => {
+      if (err) throw err;
+      const {name,email,_id,phone,address,role} = await User.findById(userData.id);
+      res.json({name,email,_id,phone,address,role});
+    });
   } else {
-    console.log("No token found");
     res.json(null);
   }
-})
+});
 
+// app.post('/logout', async (req,res)=>{
+//   try {
+//     res.clearCookie('token', {path:'/'}).json(true);
+//   } catch (error) {
+//     res.status(500).send(error)
+//   }
+// })
 
-
-app.post('/logout',(req,res)=>{
-  res.cookie('token','').json(true);
-})
-
+app.post('/logout', async (req, res) => {
+  try {
+    res.clearCookie('token', { path: '/' });
+    res.set('Cache-Control', 'no-store'); // Set cache control header
+    res.json(true);
+  } catch (error) {
+    res.status(500).send(error)
+  }
+});
 
 
 // add photo to database endpoint 
@@ -133,22 +153,23 @@ app.post('/upload', photosMiddleware.array("photos",100), (req,res)=>{
 // another end point 
 app.post('/vehicles',(req,res)=>{
   const {token} = req.cookies;
-  const {title, description, phoneNumber, addedPhotos, RentDate, RentTill, price} = req.body;
+  const {title, description, brand , phone, addedPhotos, price} = req.body;
   jwt.verify(token,jwtSecret,{},async (err, userData)=>{
     if(err) throw err;
-     const placeDoc =  await Vehicle.create({
+     const vehicleDoc =  await Vehicle.create({
         owner: userData.id,
         title,
+        brand,
         description,
-        phoneNumber,
-        photos:addedPhotos ,
-        RentDate,
-        RentTill,
+        phone,
+        photos:addedPhotos,
         price
       });
-      res.json(placeDoc);
+      res.json(vehicleDoc);
     });
 });
+
+// user-vehicles section
 app.get('/user-vehicles',(req,res)=>{
   const {token} = req.cookies;
   jwt.verify(token,jwtSecret,{},async (err, userData)=>{
@@ -158,26 +179,29 @@ app.get('/user-vehicles',(req,res)=>{
   
 })
 
+// end point for each vehicles with their id
+
 app.get('/vehicles/:id',async (req,res)=>{
   const {id} = req.params;
   res.json(await Vehicle.findById(id))
-})
+});
 
-app.put('/vehicles', async (req,res)=>{
+
+
+app.put('/vehicles',  async (req,res)=>{
   // const {id} = req.params;
   const {token} = req.cookies;
-  const {id, title, description, phoneNumber, addedPhotos, RentDate, RentTill, price} = req.body;
+  const {id, title, description, phone, addedPhotos,  price,brand} = req.body;
   jwt.verify(token,jwtSecret,{},async (err, userData)=>{
     const vehicleDoc = await Vehicle.findById(id)
     if(userData.id === vehicleDoc.owner.toString()){
       vehicleDoc.set({
         title,
         description,
-        phoneNumber,
-        photos:addedPhotos ,
-        RentDate,
-        RentTill,
-        price
+        phone,
+        photos:addedPhotos,
+        price,
+        brand
       })
       await vehicleDoc.save();
       res.json("ok")
@@ -185,9 +209,65 @@ app.put('/vehicles', async (req,res)=>{
   });
 });
 
-app.get('/vehicles',async (req,res)=>{
+// Getting all the vehicles users and bookings
+app.get('/vehicles',  async (req,res)=>{
   res.json(await Vehicle.find())
 })
+app.get('/users', async (req,res)=>{
+  res.json(await User.find())
+})
+app.get('/all-bookings',  async (req,res)=>{
+  res.json(await BookingModel.find().populate(['user','vehicle']));
+})
+
+// delete vehicle
+app.delete('/bookings/:id', async (req, res) => {
+  try {
+    // console.log(req.params.id);
+    await BookingModel.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Booking deleted successfully', });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error deleting booking' });
+  }
+});
+// delete vehicle
+app.delete('/vehicles/:id', async (req, res) => {
+  try {
+    // console.log(req.params.id);
+    await Vehicle.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Vehicle deleted successfully', });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error deleting booking' });
+  }
+});
+
+app.post('/bookings',  async (req,res)=>{
+  const userData = await getUserDataFromReq(req)
+  const {vehicle, 
+        rentDate, rentTill,
+        name, phone,
+        price, 
+        payment} = req.body;
+        try {
+          const booking = await BookingModel.create({ vehicle, user:userData.id, rentDate, rentTill, name, phone, price, payment });
+          res.json(booking);
+        } catch (err) {
+          console.log(err);
+          res.status(500).json({ message: 'Failed to create booking' });
+        }
+});
+
+
+
+app.get('/bookings', async (req,res)=>{
+  const userData =  await getUserDataFromReq(req);
+  res.json(await BookingModel.find({user:userData.id}).populate('vehicle'))
+  
+});
+
+
 
 app.listen(4000);
 

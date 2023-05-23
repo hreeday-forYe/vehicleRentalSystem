@@ -3,12 +3,11 @@ const mongoose = require('mongoose');
 const vehicleSchema = new mongoose.Schema({
   owner: {type:mongoose.Schema.Types.ObjectId, ref:"User"},
   title: String,
+  brand: String,
   description: String,
-  phoneNumber: Number,
+  phone: Number,
   photos: [String],
-  RentDate : String,
-  RentTill : String,
-  price:Number
+  price:Number,
   
 });
 const VehicleModel = mongoose.model('Vehicle', vehicleSchema);
